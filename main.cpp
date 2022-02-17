@@ -9,8 +9,6 @@
 //    3.2) Проходиться рекурсивно?
 // 4) Сборка и отправка (темный лес, гугли или отправляй в сыром виде)
 
-
-
 // Подзадачи 2
 // 1) DFS (от анордеред мap) на вывод результата
 //    1.1) Топологическая сортировка (найти циклы)
@@ -21,7 +19,7 @@
 // 4) Сортировка счетчика
 // 5) Оформи TreeNode
 // 6) Вывод результата (мб метод в treenode?)
-// 7) сMake (посмотри документацию)
+// 7) сmake (посмотри документацию)
 
 // Подзадачи 3
 // 1) Обработай циклическую зависимость
@@ -32,6 +30,14 @@
 // 4) cmake
 // 5) Документация
 // 6) Учет комментов
+
+// Подзадачи 4
+// 1) Циклическая зависимость (Как бы её корректно выводить??)
+// 2) Учет комментов
+// 3) Треугольные скобочки
+//    3.1) Отказаться от string??
+// 4) cmake
+// 6) Документация
 
 
 #include <iostream>
@@ -53,15 +59,10 @@ using FileMap = std::unordered_map<std::string, TreeNode>;
 using IncludeCounter = std::vector<std::pair<std::string, int>>;
 using EachFunction = std::function<void(const std::string& file_name, int deep)>;
 
-
-
-std::vector<std::string> parse_file(std::ifstream& file, const std::string& path)
+std::vector<std::string> parse_file(std::ifstream& file, fs::path path)
 {
     std::vector<std::string> result;
     std::string line;
-
-    fs::path dir_path { path };
-    dir_path.remove_filename();
 
     std::regex include_regex ("#include *(\"|<)(.*)(\"|>).*");
     std::smatch include_match;
@@ -72,22 +73,23 @@ std::vector<std::string> parse_file(std::ifstream& file, const std::string& path
             if(include_match.size() != 4)
                 continue;
 
-            result.emplace_back(dir_path.string().append(include_match[2]));
+            result.emplace_back(path.remove_filename().string().append(include_match[2]));
         }
 
     }
     return result;
 }
 
-void inspect(FileMap& file_map, const std::string& path)
+void inspect(FileMap& file_map, const fs::path& path)
 {
-    auto& node = file_map[path];
+    auto& node = file_map[path.string()];
 
     if (node.inspected)
         return;
 
     node.inspected = true;
-    std::ifstream file(path);
+    node.file_name = path.filename();
+    std::ifstream file(path.string());
     node.exists = file.is_open();
 
     if (node.exists)
@@ -107,9 +109,8 @@ void dfs(FileMap& file_map, const std::string& root_file, EachFunction func, int
     fs::path path{root_file};
     func(path.filename().string(), deep);
     for(const auto& child : file_map[root_file].includes)
-        dfs(file_map, child, func, deep + 1);
+            dfs(file_map, child, func, deep + 1);
 }
-
 
 void print_file_map_from_root(FileMap& file_map, const std::string& root_file)
 {
@@ -121,42 +122,65 @@ void print_file_map_from_root(FileMap& file_map, const std::string& root_file)
 }
 
 
+// analyzer d:\mysources\ -I d:\mysources\includes -I d:\mylibrary
+
+void parse_command_line_arguments(int argc, char* argv[], std::string& directory, std::vector<std::string>& include_directories)
+{
+    if (argc < 2)
+        throw std::runtime_error("Enter the parameters");
+
+    if (!fs::exists(argv[1]))
+        throw std::runtime_error("Entered directory does not exist");
+
+    directory = argv[1];
+
+    const std::vector<std::string_view> args(argv + 2, argv + argc);
+
+    for (size_t i = 0; i < args.size(); i = i + 2)
+    {
+        if (args[i] == "I" && (i + 1) < args.size())
+        {
+            if(!fs::exists(args[i + 1]))
+                throw std::runtime_error("Entered include directory does not exist");
+
+            include_directories.emplace_back(args[i + 1]);
+        }
+        else
+        {
+            throw std::runtime_error("To define include directory path(s), enter a command:\n\tanalyzer <directory path> I <first include directory path> I <second include directory path> ...");
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
-//    if (argc != 2)
-//    {
-//        std::cout << "Usage: " << argv[0] << " <path>\n";
-//        return 1;
-//    }
 
-    std::string test_dir {"/home/mteejay/data/practice_in_test_task/"};
+    std::string dir;
+    std::vector<std::string> include_directories;
+
+    parse_command_line_arguments(argc, argv, dir, include_directories);
 
     FileMap file_map{};
     IncludeCounter include_counter{};
 
-    if (!fs::exists(test_dir))
-    {
-        std::cout << "Path " << test_dir << " does not exist.\n";
-        return 1;
-    }
-
 
     // Проход по директории
-    for (auto const& file : fs::recursive_directory_iterator(test_dir))
+    for (auto const& file : fs::recursive_directory_iterator(dir))
     {
         if (!file.is_directory())
         {
-            auto path = file.path();
+            auto path {file.path()};
             if (path.extension() == ".cpp" || path.extension() == ".hpp" || path.extension() == ".h")
-                inspect(file_map, file.path().string());
+                inspect(file_map, path);
         }
     }
 
 
     // Создаём счётчик
-    for (const auto& elem: file_map)
+    for (auto& elem: file_map)
+    {
         include_counter.emplace_back(elem.first, elem.second.counter);
-
+    }
     // Cортируем счётчик
     auto custom_pair_sort = [](const std::pair<std::string, int>& first_member, const std::pair<std::string, int>& second_member) -> bool {
         if (first_member.second == second_member.second)
