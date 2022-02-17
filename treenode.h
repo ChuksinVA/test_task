@@ -2,6 +2,7 @@
 
 #include<vector>
 #include<string>
+#include<iostream>
 
 class TreeNode
 {
@@ -12,5 +13,7 @@ public:
     bool inspected = false;
 
     TreeNode();
+
+    friend std::ostream& operator<< (std::ostream &out, const TreeNode &treenode);
 };
 
