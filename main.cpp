@@ -63,38 +63,45 @@ using NodeCount = std::pair<fs::path, int>;
 using IncludeCounter = std::vector<NodeCount>;
 using EachFunction = std::function<void(const std::string& file_name, int deep, bool existance)>;
 
-bool detect_comment_block(std::string& line, bool is_comment_block_open)
+// Детектор комментов вида /* ... */
+bool cut_comment_block(std::string& line, bool is_comment_block_open)
 {
     std::string block_comment_start = "/*";
     std::string block_comment_end = "*/";
-    bool result = false;
 
-    if (!is_comment_block_open) {
+    if (!is_comment_block_open)
+    {
         while (line.find(block_comment_start) != std::string::npos)
         {
-            if (auto end_pos = line.find(block_comment_end); end_pos != std::string::npos)
+            auto start_pos = line.find(block_comment_start);
+            auto end_pos = line.find(block_comment_end);
+
+            if (end_pos == std::string::npos)
             {
-                line = line.substr(end_pos + 2);
-                result = false;
+                is_comment_block_open = true;
+                line.erase(start_pos);
             }
             else
-                line = line.substr(line.rfind(block_comment_start) + 2);
-            result = true;
+                line.erase(start_pos, end_pos + 2);
         }
     }
     else
     {
-        if (auto end_pos = line.find(block_comment_end); end_pos != std::string::npos)
-        {
-            line = line.substr(end_pos + 2);
-            result = false;
-        }
+        auto end_pos = line.find(block_comment_end);
+        if (end_pos == std::string::npos)
+            line.erase(line.begin(), line.end());
         else
-            result = true;
+        {
+            line.erase(0, end_pos + 2);
+            is_comment_block_open = cut_comment_block(line, false);
+        }
+
     }
-    return result;
+    return is_comment_block_open;
+
 }
 
+// Парсер файла для обнаружения инклудов
 std::vector<fs::path> parse_file(const fs::path& path, const std::vector<fs::path>& headers_directories)
 {
     std::vector<fs::path> includes;
@@ -109,9 +116,7 @@ std::vector<fs::path> parse_file(const fs::path& path, const std::vector<fs::pat
     while (std::getline(file, line))
     {
 
-        if (is_comment_block_open = detect_comment_block(line, is_comment_block_open); is_comment_block_open)
-            continue;
-
+        is_comment_block_open = cut_comment_block(line, is_comment_block_open);
 
         if (std::regex_match(line, include_match, include_regex))
         {
@@ -148,7 +153,7 @@ std::vector<fs::path> parse_file(const fs::path& path, const std::vector<fs::pat
     return includes;
 }
 
-
+// Рекурсивное наполнение хеш таблицы вида (путь узла, данные узла)
 void inspect(FileMap& file_map, const fs::path& path, const std::vector<fs::path>& headers_directories)
 {
     auto& node = file_map[path.string()];
@@ -172,7 +177,7 @@ void inspect(FileMap& file_map, const fs::path& path, const std::vector<fs::path
 
 }
 
-
+// DFC
 void dfs(FileMap& file_map, const std::string& root_file, EachFunction func, int deep)
 {
     func(file_map[root_file].file_name, deep, file_map[root_file].exists);
@@ -188,8 +193,10 @@ void dfs(FileMap& file_map, const std::string& root_file, EachFunction func, int
     }
 }
 
+// Фунция вывода дерева
 void print_tree_from_the_root_node(FileMap& file_map, const std::string& root_node)
 {
+    // deep можно заменить на стек, чтобы при циклической зависимости понять где она находится
     auto printFunc = [](const std::string& file_name, int deep, bool existance){
         std::cout << std::string(deep * 2, ' ');
         std::cout << file_name;
@@ -200,9 +207,7 @@ void print_tree_from_the_root_node(FileMap& file_map, const std::string& root_no
     dfs(file_map, root_node, printFunc, 0);
 }
 
-
-// analyzer d:\mysources\ -I d:\mysources\includes -I d:\mylibrary
-
+// Парсер коммандной строки
 void parse_command_line_arguments(int argc, char* argv[], fs::path& directory, std::vector<fs::path>& headers_directories)
 {
     if (argc < 2)
@@ -254,7 +259,7 @@ int main(int argc, char *argv[])
     }
 
 
-    // Создаём счётчик
+    // Создаём счётчик и обнуляем inspected для прохода вдальнейшем
     for (auto& [path, tree_node]: file_map) {
         tree_node.inspected = false;
         include_counter.emplace_back(path, tree_node.counter);
@@ -274,6 +279,7 @@ int main(int argc, char *argv[])
     // Вывод деревьев
     for (const auto& elem: include_counter)
     {
+        // Выводим элементы с частотой включений 0, т.к. это корневые узлы
         if (elem.second == 0)
             print_tree_from_the_root_node(file_map, elem.first);
     }
@@ -283,14 +289,6 @@ int main(int argc, char *argv[])
     // Вывод счётчика
     for (const auto& elem: include_counter)
     {
-        fs::path path {elem.first};
-        std::cout << path.filename().string() << " - " << elem.second << std::endl;
+        std::cout << elem.first.filename().string() << " - " << elem.second << std::endl;
     }
-
-//    std::string com_block {"check /* and */ /* and */\n"};
-//    bool is_comment_block_open = false;
-
-//    detect_comment_block(com_block, is_comment_block_open);
-
-//    std::cout << com_block;
 }
