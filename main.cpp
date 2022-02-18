@@ -61,16 +61,40 @@ namespace fs = std::filesystem;
 using FileMap = std::unordered_map<std::string, TreeNode>;
 using NodeCount = std::pair<fs::path, int>;
 using IncludeCounter = std::vector<NodeCount>;
-using EachFunction = std::function<void(const std::string& file_name, int deep)>;
+using EachFunction = std::function<void(const std::string& file_name, int deep, bool existance)>;
 
-
-
-fs::path parse_include()
+bool detect_comment_block(std::string& line, bool is_comment_block_open)
 {
+    std::string block_comment_start = "/*";
+    std::string block_comment_end = "*/";
+    bool result = false;
 
+    if (!is_comment_block_open) {
+        while (line.find(block_comment_start) != std::string::npos)
+        {
+            if (auto end_pos = line.find(block_comment_end); end_pos != std::string::npos)
+            {
+                line = line.substr(end_pos + 2);
+                result = false;
+            }
+            else
+                line = line.substr(line.rfind(block_comment_start) + 2);
+            result = true;
+        }
+    }
+    else
+    {
+        if (auto end_pos = line.find(block_comment_end); end_pos != std::string::npos)
+        {
+            line = line.substr(end_pos + 2);
+            result = false;
+        }
+        else
+            result = true;
+    }
+    return result;
 }
 
-/* */
 std::vector<fs::path> parse_file(const fs::path& path, const std::vector<fs::path>& headers_directories)
 {
     std::vector<fs::path> includes;
@@ -80,36 +104,50 @@ std::vector<fs::path> parse_file(const fs::path& path, const std::vector<fs::pat
     std::regex include_regex (" *#include *(\"|<)(.*)(\"|>).*");
     std::smatch include_match;
 
-    //std::regex open_comment_regex ("*(\/\*) *");
-    //std::regex close_comment_regex (" *(\*\/) *");
+    bool is_comment_block_open = false;
 
     while (std::getline(file, line))
-    {        
+    {
+
+        if (is_comment_block_open = detect_comment_block(line, is_comment_block_open); is_comment_block_open)
+            continue;
+
 
         if (std::regex_match(line, include_match, include_regex))
         {
             if(include_match.size() != 4)
                 continue;
 
-//            if (include_match[1] == "<")
-//            {
-//                for (const auto& header_dir : headers_directories)
-//                {
-//                    const auto& include_path = header_dir.parent_path() / fs::path{ include_match[2] };
-//                    for (auto const& entry : fs::directory_iterator(header_dir))
-//                        if (!entry.is_directory()) {}
-//                }
-//            }
-//            else
-//            {
+            if (include_match[1] == "<")
+            {
+                for (const auto& header_dir : headers_directories)
+                {
+                    const auto& include_path = header_dir.parent_path() / fs::path{ include_match[2] };
+                    bool path_was_included = false;
+                    for (auto const& entry : fs::directory_iterator(header_dir))
+                    {
+                        if (!entry.is_directory() && entry.path() == include_path)
+                        {
+                            includes.emplace_back(include_path);
+                            path_was_included = true;
+                            break;
+                        }
+                    }
+                    if (path_was_included)
+                        break;
+                }
+            }
+            else
+            {
                 const auto& include_path = path.parent_path()/fs::path{ include_match[2] };
                 includes.emplace_back(include_path);
-//            }
+            }
         }
 
     }
     return includes;
 }
+
 
 void inspect(FileMap& file_map, const fs::path& path, const std::vector<fs::path>& headers_directories)
 {
@@ -137,26 +175,29 @@ void inspect(FileMap& file_map, const fs::path& path, const std::vector<fs::path
 
 void dfs(FileMap& file_map, const std::string& root_file, EachFunction func, int deep)
 {
-    func(file_map[root_file].file_name, deep);
+    func(file_map[root_file].file_name, deep, file_map[root_file].exists);
 
     if (!file_map[root_file].inspected)
     {
         file_map[root_file].inspected = true;
         for(const auto& child : file_map[root_file].includes)
             dfs(file_map, child, func, deep + 1);
+        file_map[root_file].inspected = false;
     } else {
-
-        throw std::runtime_error("");
+        throw std::runtime_error("Cyclic dependence is found");
     }
 }
 
-void print_file_map_from_root(FileMap& file_map, const std::string& root_file)
+void print_tree_from_the_root_node(FileMap& file_map, const std::string& root_node)
 {
-    auto printFunc = [](const std::string& file_name, int deep){
+    auto printFunc = [](const std::string& file_name, int deep, bool existance){
         std::cout << std::string(deep * 2, ' ');
-        std::cout << file_name << std::endl;
+        std::cout << file_name;
+        if (!existance)
+            std::cout << " (!)";
+        std::cout << std::endl;
     };
-    dfs(file_map, root_file, printFunc, 0);
+    dfs(file_map, root_node, printFunc, 0);
 }
 
 
@@ -214,8 +255,10 @@ int main(int argc, char *argv[])
 
 
     // Создаём счётчик
-    for (const auto& [path, tree_node]: file_map)
+    for (auto& [path, tree_node]: file_map) {
+        tree_node.inspected = false;
         include_counter.emplace_back(path, tree_node.counter);
+    }
 
     // Лямбда функция для сортировки счётчика инклудов
     auto custom_pair_sort = [](const NodeCount& left_elem, const NodeCount& right_elem) -> bool {
@@ -231,10 +274,8 @@ int main(int argc, char *argv[])
     // Вывод деревьев
     for (const auto& elem: include_counter)
     {
-        for (auto& [path, tree_node]: file_map)
-            tree_node.inspected = false;
         if (elem.second == 0)
-            print_file_map_from_root(file_map, elem.first);
+            print_tree_from_the_root_node(file_map, elem.first);
     }
 
     std::cout << "\n";
@@ -246,46 +287,10 @@ int main(int argc, char *argv[])
         std::cout << path.filename().string() << " - " << elem.second << std::endl;
     }
 
+//    std::string com_block {"check /* and */ /* and */\n"};
+//    bool is_comment_block_open = false;
 
+//    detect_comment_block(com_block, is_comment_block_open);
 
-
-
-//    // Тест parse_file()
-
-//    std::ifstream file(test_file);
-//    std::vector<std::string> check_parse {};
-
-//    if (file.is_open())
-//    {
-//        check_parse = parse_file(file, test_file);
-//    }
-
-//    for (const auto& elem : check_parse)
-//    {
-//        std::cout << elem << "\n";
-//    }
-
-
-//    // Тест inspect()
-
-//    inspect(file_map, counter, test_file);
-
-//    for (auto& elem : file_map) {
-//        fs::path path {elem.first};
-//        std::cout << path.filename() << ": include counter - " << elem.second.counter <<"\n";
-//        std::cout << elem.second << "\n";
-//    }
-
-
-
-//    // Тест path_cast()
-
-//    std::string my_include {"include.h"};
-
-//    auto modified_path = path_cast(my_include, test_file);
-
-//    std::cout << test_file << "\n";
-//    std::cout << modified_path << std::endl;
-
-
+//    std::cout << com_block;
 }

@@ -4,8 +4,7 @@ CONFIG -= app_bundle
 CONFIG -= qt
 
 SOURCES += \
-        main.cpp \
-        treenode.cpp
+        main.cpp
 
 HEADERS += \
     treenode.h
